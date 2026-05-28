@@ -87,14 +87,15 @@ def compute_reserves(
     premium_series: pd.Series = None, # AY-indexed premiums from uploaded data
 ):
     """
-    Returns (results_df, ldfs_dict, cdfs_dict, eu_float).
+    Returns (results_df, ldfs_dict, cdfs_dict, eu_float, tri_cum_df).
     results_df has one row per accident year.
+    tri_cum_df is the upper cumulative paid triangle (NaN = not yet observed).
     """
 
     # 1. Filter to valuation date
     df = df[df["Settlement_Year"] <= valuation_year].copy()
     if df.empty:
-        return None, {}, {}, np.nan
+        return None, {}, {}, np.nan, None
 
     # 2. Total paid per AY (latest diagonal value)
     latest_paid = df.groupby("Accident_Year")["Amount"].sum()
@@ -203,7 +204,18 @@ def compute_reserves(
             "Blend_50_50_Res": (cl_r + bf_r) / 2,
         })
     results = pd.DataFrame(rows).set_index("Accident_Year")
-    return results, ldfs, cdfs, eu_display
+
+    # 11. Build display triangle: upper triangle with NaN below the diagonal
+    display_tri = tri_cum.copy().astype(float)
+    for ay in display_tri.index:
+        d = diag_lag.get(ay, -1)
+        for lag in display_tri.columns:
+            if lag > d:
+                display_tri.loc[ay, lag] = np.nan
+    display_tri.index.name = "Accident_Year"
+    display_tri.columns.name = "Development_Lag"
+
+    return results, ldfs, cdfs, eu_display, display_tri
 
 
 # ── Data Input ──────────────────────────────────────────────────────────────────
@@ -336,7 +348,7 @@ if st.button("🚀 RUN RESERVING MODEL", type="primary", use_container_width=Tru
     work_df      = st.session_state["work_df"]
     prem_series  = st.session_state.get("premium_series", None)
 
-    results, ldfs, cdfs, eu = compute_reserves(
+    results, ldfs, cdfs, eu, display_tri = compute_reserves(
         df              = work_df,
         valuation_year  = int(valuation_year),
         tail            = float(tail_factor),
@@ -353,6 +365,20 @@ if st.button("🚀 RUN RESERVING MODEL", type="primary", use_container_width=Tru
             "or check that your Settlement_Year column is populated correctly."
         )
         st.stop()
+
+    # ── Cumulative paid triangle ────────────────────────────────────────────
+    st.subheader("Cumulative Paid Loss Triangle")
+    st.caption(
+        "Rows = Accident Year | Columns = Development Lag | "
+        "Blank cells = not yet observed at the valuation date. "
+        "Values in $."
+    )
+    st.dataframe(
+        display_tri.style.format("${:,.2f}", na_rep="—"),
+        use_container_width=True,
+    )
+
+    st.markdown("---")
 
     # ── Summary metrics ─────────────────────────────────────────────────────
     st.subheader("Summary")
@@ -395,9 +421,18 @@ if st.button("🚀 RUN RESERVING MODEL", type="primary", use_container_width=Tru
             st.dataframe(cdf_df.style.format({"CDF": "{:.6f}"}), use_container_width=True)
 
     # ── Download ─────────────────────────────────────────────────────────────
-    st.download_button(
-        "⬇ Download Results (CSV)",
-        results.to_csv(),
-        file_name=f"reserves_{int(valuation_year)}.csv",
-        mime="text/csv",
-    )
+    col_dl1, col_dl2 = st.columns(2)
+    with col_dl1:
+        st.download_button(
+            "⬇ Download Results (CSV)",
+            results.to_csv(),
+            file_name=f"reserves_{int(valuation_year)}.csv",
+            mime="text/csv",
+        )
+    with col_dl2:
+        st.download_button(
+            "⬇ Download Triangle (CSV)",
+            display_tri.to_csv(),
+            file_name=f"triangle_{int(valuation_year)}.csv",
+            mime="text/csv",
+        )
