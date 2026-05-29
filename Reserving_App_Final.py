@@ -366,75 +366,55 @@ if st.button("🚀 RUN RESERVING MODEL", type="primary", use_container_width=Tru
         )
         st.stop()
 
-    # ── Build reserves triangle from results ───────────────────────────────
-    # Each AY contributes one reserve figure (the 50/50 blend).
-    # We also build a projected cumulative triangle that fills in the
-    # lower-right (future) portion using the CL projected ultimates.
+    # ── Build reserves triangle ──────────────────────────────────────────────
+    all_lags = sorted(display_tri.columns.tolist())
 
-    # --- Projected full triangle (paid + projected future) ---
-    proj_tri = display_tri.copy()  # start with observed upper triangle
-    all_lags = sorted(proj_tri.columns.tolist())
-    max_lag = max(all_lags) if all_lags else 0
-
-    for ay in proj_tri.index:
-        d = int(valuation_year - ay)
-        latest = float(results.loc[ay, "Latest_Paid"]) if ay in results.index else 0.0
-        cdf_at_diag = results.loc[ay, "CDF"] if ay in results.index else 1.0
-        ult_cl = results.loc[ay, "CL_Ultimate"] if ay in results.index else latest
-        for lag in all_lags:
-            if lag > d:
-                # project forward: Ultimate × (CDF at this lag / CDF at diagonal)
-                # = latest_paid × (CDF_diag / CDF_lag)  but simpler via:
-                # projected cumulative at lag = Ultimate / CDF(lag)
-                cdf_lag = cdfs.get(lag, 1.0)
-                proj_tri.loc[ay, lag] = ult_cl / cdf_lag if cdf_lag > 0 else ult_cl
-
-    # --- Reserves triangle: projected - paid (future cells only, else 0) ---
     res_tri = pd.DataFrame(index=display_tri.index, columns=all_lags, dtype=float)
     res_tri.index.name = "Accident_Year"
-    res_tri.columns.name = "Development_Lag"
+
     for ay in res_tri.index:
         d = int(valuation_year - ay)
-        latest = float(results.loc[ay, "Latest_Paid"]) if ay in results.index else 0.0
-        ult_cl = results.loc[ay, "CL_Ultimate"] if ay in results.index else latest
+        ult_cl = float(results.loc[ay, "CL_Ultimate"]) if ay in results.index else 0.0
         for lag in all_lags:
-            cdf_lag = cdfs.get(lag, 1.0)
-            projected_cum = ult_cl / cdf_lag if cdf_lag > 0 else ult_cl
             if lag <= d:
-                # observed: reserve = projected ultimate - cumulative paid at this lag
-                paid_at_lag = display_tri.loc[ay, lag] if not pd.isna(display_tri.loc[ay, lag]) else 0.0
-                res_tri.loc[ay, lag] = ult_cl - paid_at_lag
+                paid = display_tri.loc[ay, lag]
+                paid = 0.0 if pd.isna(paid) else float(paid)
+                res_tri.loc[ay, lag] = ult_cl - paid
             else:
-                res_tri.loc[ay, lag] = np.nan  # future cells left blank in reserve view
+                res_tri.loc[ay, lag] = np.nan
 
-    # Add a "Total Reserve" column = CL reserve at diagonal
     res_tri["CL_Reserve"] = [
-        results.loc[ay, "CL_Reserve"] if ay in results.index else np.nan
+        float(results.loc[ay, "CL_Reserve"]) if ay in results.index else np.nan
         for ay in res_tri.index
     ]
 
-    # ── Show triangles in tabs ───────────────────────────────────────────────
-    tri_tab1, tri_tab2 = st.tabs(["📐 Reserves Triangle", "💰 Cumulative Paid Triangle"])
+    # rename columns to strings so Styler works reliably
+    res_tri.columns = [f"Lag {c}" if isinstance(c, int) else c for c in res_tri.columns]
+    paid_tri_display = display_tri.copy()
+    paid_tri_display.columns = [f"Lag {c}" for c in paid_tri_display.columns]
 
-    with tri_tab1:
-        st.subheader("Reserves Triangle (CL Method)")
-        st.caption(
-            "Each cell shows the outstanding reserve = CL Ultimate − Cumulative Paid to that lag. "
-            "The 'CL_Reserve' column is the reserve at the current diagonal (latest observed lag per AY)."
-        )
-        st.dataframe(
-            res_tri.style.format("${:,.2f}", na_rep="—"),
-            use_container_width=True,
-        )
+    # ── Reserves triangle ────────────────────────────────────────────────────
+    st.subheader("📐 Reserves Triangle (CL Method)")
+    st.caption(
+        "Each cell = CL Ultimate − Cumulative Paid at that development lag. "
+        "Read across a row to see how the reserve reduces as claims develop. "
+        "The CL_Reserve column is the reserve at the current valuation diagonal."
+    )
+    st.dataframe(
+        res_tri.style.format("${:,.2f}", na_rep="—"),
+        use_container_width=True,
+    )
 
-    with tri_tab2:
-        st.subheader("Cumulative Paid Loss Triangle")
+    st.markdown("---")
+
+    # ── Cumulative paid triangle ─────────────────────────────────────────────
+    with st.expander("💰 Cumulative Paid Loss Triangle", expanded=False):
         st.caption(
             "Rows = Accident Year | Columns = Development Lag | "
-            "Blank cells (—) = not yet observed at the valuation date."
+            "— = not yet observed at the valuation date."
         )
         st.dataframe(
-            display_tri.style.format("${:,.2f}", na_rep="—"),
+            paid_tri_display.style.format("${:,.2f}", na_rep="—"),
             use_container_width=True,
         )
 
