@@ -224,9 +224,23 @@ if st.button("🚀 RUN RESERVING MODEL", type="primary", use_container_width=Tru
     # ════════════════════════════════════════════════════════════════════════
 
     # 1. Reserves triangle
+    # Convert index to plain int to avoid Int64/object rendering bugs in st.dataframe
+    res_tri.index  = res_tri.index.astype(int)
+    paid_tri.index = paid_tri.index.astype(int)
+    # Convert all values to plain float (replace pd.NA with np.nan)
+    res_tri  = res_tri.astype(object).where(res_tri.notna(), other=None)
+    res_tri  = res_tri.apply(pd.to_numeric, errors="coerce")
+    paid_tri = paid_tri.astype(object).where(paid_tri.notna(), other=None)
+    paid_tri = paid_tri.apply(pd.to_numeric, errors="coerce")
+
     st.subheader("📐 Reserves Triangle (Chain-Ladder)")
     st.caption("Each cell = CL Ultimate − Cumulative Paid at that development lag. CL_Reserve = reserve at the valuation diagonal.")
-    st.dataframe(res_tri, use_container_width=True)
+    st.write(f"Triangle shape: {res_tri.shape} | dtype sample: {res_tri.dtypes.iloc[0]} | index type: {type(res_tri.index[0])}")
+    try:
+        st.dataframe(res_tri, use_container_width=True)
+    except Exception as e:
+        st.error(f"st.dataframe failed: {e}")
+        st.write(res_tri.to_dict())
 
     st.markdown("---")
 
